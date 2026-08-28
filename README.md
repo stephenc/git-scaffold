@@ -97,14 +97,22 @@ starts working for all of them.
 Where the scaffold permits `json-patch` for a JSON or YAML file and both
 sides parse, the difference is captured as a structured RFC 6902 patch and
 the file is normalized to the canonical serialization; everything else
-becomes a `text-patch` with the file left byte-for-byte untouched. Note
-that json-patch application canonicalizes YAML — comments are dropped,
-anchors expanded, YAML 1.1 scalars such as `on`, `yes` or `0755` resolved —
-so YAML takes the structured route only when the scaffold's own file
-already round-trips unchanged; pass `--text-patch` to capture everything as
-text patches and avoid canonicalization entirely. `text-patch` is always
-available to targets as the universal escape hatch; structured strategies
-such as `json-patch` require the scaffold to permit them per file rule.
+becomes a `text-patch` with the file left byte-for-byte untouched.
+`text-patch` is always available to targets as the universal escape hatch;
+structured strategies such as `json-patch` require the scaffold to permit
+them per file rule.
+
+> **YAML and automatic json-patch.** Applying a json-patch to YAML
+> canonicalizes the whole document: comments are dropped, anchors expanded,
+> and YAML 1.1 scalars such as `on`, `yes` or `0755` resolved. So
+> `init --existing` and `repatch` generate a json-patch for a YAML file
+> **only when the scaffold's own file is already canonical** — in practice,
+> free of comments and anchors. A commented `.golangci.yml` falls back to
+> `text-patch` even when its rule says `patch = "json-patch"`. This is
+> deliberately conservative for v0.1; pass `--text-patch` to opt out of
+> structured adoption entirely. If the target already declares a `json-patch`
+> override for the file, `repatch` honours that explicit choice regardless of
+> comments. JSON files are unaffected.
 
 ## How it works
 

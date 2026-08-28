@@ -193,6 +193,21 @@ patches = [
   source rule permits it with <code>patch = "json-patch"</code>.</li>
 </ul>
 
+<div class="note">
+<strong>YAML and automatic json-patch.</strong> Applying a json-patch to YAML
+canonicalizes the whole document: comments are dropped, anchors expanded, and
+YAML 1.1 scalars such as <code>on</code>, <code>yes</code> or <code>0755</code>
+resolved. <code>init --existing</code> and <code>repatch</code> therefore
+generate a json-patch for a YAML file <em>only when the scaffold's own file is
+already canonical</em> — in practice, free of comments and anchors. A commented
+<code>.golangci.yml</code> falls back to <code>text-patch</code> even when its
+rule says <code>patch = "json-patch"</code>. This is deliberately conservative
+for v0.1; <code>--text-patch</code> opts out of structured adoption entirely.
+If the target already declares a <code>json-patch</code> override for the
+file, <code>repatch</code> honours that explicit choice regardless of
+comments. JSON files are unaffected.
+</div>
+
 <p>A failed patch fails materialization — there is no silent repair, fuzzy
 application, or three-way merge. If a downstream patch is incompatible with a
 new upstream version, human resolution is required; a failed

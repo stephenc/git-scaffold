@@ -204,7 +204,7 @@ func (t *target) adoptExisting(
 			overwritten = append(overwritten, p)
 			expect[p] = tree[p]
 		default:
-			c, err := choosePatch(p, tree[p], w, permitted[p], textOnly)
+			c, err := choosePatch(p, tree[p], w, permitted[p], textOnly, false)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("init --existing: %w", err)
 			}

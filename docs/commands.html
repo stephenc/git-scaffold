@@ -201,8 +201,9 @@ the working tree — exactly one patch per file, a <code>json-patch</code>
 where the source permits it for a JSON/YAML file and both sides parse
 (the file is normalized to the canonical serialization — for YAML only
 when the scaffold's own file already round-trips unchanged, since
-canonicalization drops comments and resolves YAML 1.1 scalars), a
-<code>text-patch</code> otherwise. Files <code>check</code> already accepts
+canonicalization drops comments and resolves YAML 1.1 scalars — unless the
+existing override already says <code>json-patch</code>, an explicit choice
+that is honoured regardless), a <code>text-patch</code> otherwise. Files <code>check</code> already accepts
 are left alone, override included. Files back at the scaffold's content lose
 their override, stale patch files are deleted, and comments and formatting
 in <code>config.toml</code> are preserved. The lock is never changed, and

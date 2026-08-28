@@ -210,24 +210,24 @@ func Materialize(
 		o := t.Overrides[path]
 		e, ok := managed[path]
 		if !ok {
-			return nil, fmt.Errorf("%s: override targets a file the source does not manage", path)
+			return nil, &OverrideError{Path: path, Err: fmt.Errorf("%s: override targets a file the source does not manage", path)}
 		}
 		// §23: text-patch is always available as the universal escape hatch;
 		// a structured strategy requires the rule's patch declaration.
 		if o.Strategy != config.StrategyTextPatch {
 			if e.patch == "" {
-				return nil, fmt.Errorf("%s: the source does not permit structured patching of this file", path)
+				return nil, &OverrideError{Path: path, Err: fmt.Errorf("%s: the source does not permit structured patching of this file", path)}
 			}
 			if o.Strategy != e.patch {
-				return nil, fmt.Errorf("%s: override strategy %q does not match source-permitted strategy %q",
-					path, o.Strategy, e.patch)
+				return nil, &OverrideError{Path: path, Err: fmt.Errorf("%s: override strategy %q does not match source-permitted strategy %q",
+					path, o.Strategy, e.patch)}
 			}
 		}
 		content := out[path]
 		for _, pp := range o.Patches {
 			data, ok := patchFiles[pp]
 			if !ok {
-				return nil, fmt.Errorf("%s: patch file %s not found under .git-scaffold/", path, pp)
+				return nil, &OverrideError{Path: path, Err: fmt.Errorf("%s: patch file %s not found under .git-scaffold/", path, pp)}
 			}
 			switch o.Strategy {
 			case config.StrategyJSONPatch:
@@ -238,13 +238,28 @@ func Materialize(
 				err = fmt.Errorf("%s: %s: unsupported patch strategy %q", path, pp, o.Strategy)
 			}
 			if err != nil {
-				return nil, err
+				return nil, &OverrideError{Path: path, Err: err}
 			}
 		}
 		out[path] = content
 	}
 	return out, nil
 }
+
+// OverrideError reports a failure in the target-override stage of
+// materialization (§24–§27): an override targeting an unmanaged file, a
+// strategy the source does not permit, a missing patch file, or a patch
+// that does not apply. Everything before that stage (expansion, argument
+// resolution, substitution) succeeded. `repatch` uses it to distinguish
+// "the existing overrides are broken" — which it exists to repair — from a
+// scaffold that cannot materialize at all.
+type OverrideError struct {
+	Path string // the overridden managed path
+	Err  error
+}
+
+func (e *OverrideError) Error() string { return e.Err.Error() }
+func (e *OverrideError) Unwrap() error { return e.Err }
 
 func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))

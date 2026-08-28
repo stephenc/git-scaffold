@@ -780,6 +780,55 @@ func TestRepatchNonCanonicalYAMLBaseUsesText(t *testing.T) {
 	mustCheckClean(t, tgt)
 }
 
+// A target that already declares json-patch for a YAML file has chosen
+// canonicalization; repatch honours that even though the base has comments.
+func TestRepatchHonoursExplicitJSONPatchOnNonCanonicalYAML(t *testing.T) {
+	setEnv(t)
+	src := newRepo(t)
+	base := "# lint configuration\nlinters:\n  enable:\n    - govet\n"
+	writeFiles(t, src, map[string]string{
+		".git-scaffold/config.toml": "[scaffold]\nversion = 1\n\n[[files]]\npath = \".golangci.yml\"\npatch = \"json-patch\"\n",
+		".golangci.yml":             base,
+	})
+	commitAll(t, src, "A")
+	tgt := newRepo(t)
+	if err := Init(tgt, io.Discard, filepath.ToSlash(src), "main", nil, false, false, false); err != nil {
+		t.Fatal(err)
+	}
+	// Automatic selection: the commented base is not canonical → text.
+	writeFiles(t, tgt, map[string]string{".golangci.yml": base + "    - staticcheck\n"})
+	if out := mustRepatch(t, tgt, false); !strings.Contains(out, "P .golangci.yml (text-patch)\n") {
+		t.Fatalf("output:\n%s", out)
+	}
+	// The user switches the override to json-patch by hand.
+	cfg := readFile(t, tgt, ".git-scaffold/config.toml")
+	cfg = strings.Replace(cfg, "strategy = \"text-patch\"", "strategy = \"json-patch\"", 1)
+	cfg = strings.Replace(cfg, ".golangci.yml.patch", ".golangci.yml.json", 1)
+	writeFiles(t, tgt, map[string]string{
+		".git-scaffold/config.toml":                cfg,
+		".git-scaffold/patches/.golangci.yml.json": "[]\n",
+	})
+	// Now the explicit choice is honoured: json-patch despite the comment.
+	writeFiles(t, tgt, map[string]string{".golangci.yml": base + "    - staticcheck\n    - errcheck\n"})
+	out := mustRepatch(t, tgt, false)
+	if !strings.Contains(out, "P .golangci.yml (json-patch)\n") || !strings.Contains(out, "M .golangci.yml\n") {
+		t.Fatalf("output:\n%s", out)
+	}
+	if got := readFile(t, tgt, ".golangci.yml"); strings.Contains(got, "# lint") || !strings.Contains(got, "errcheck") {
+		t.Fatalf("expected canonicalized content: %q", got)
+	}
+	if !strings.Contains(readFile(t, tgt, ".git-scaffold/patches/.golangci.yml.json"), "\"add\"") {
+		t.Fatal("expected an RFC 6902 add operation")
+	}
+	mustCheckClean(t, tgt)
+	// --text-patch still wins over the explicit choice.
+	writeFiles(t, tgt, map[string]string{".golangci.yml": "linters:\n  enable:\n  - govet\n"})
+	if out := mustRepatch(t, tgt, true); !strings.Contains(out, "P .golangci.yml (text-patch)\n") {
+		t.Fatalf("output:\n%s", out)
+	}
+	mustCheckClean(t, tgt)
+}
+
 func TestRepatchDuplicateJSONKeysUseText(t *testing.T) {
 	setEnv(t)
 	_, tgt := initializedR(t)

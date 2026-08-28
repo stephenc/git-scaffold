@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -39,10 +40,12 @@ func structuredExt(path string) bool {
 // structured extension, both sides parse, and the generated patch verifies
 // through the real applier; a difference that vanishes after decoding is a
 // formatting-only difference needing no override. Everything else, and
-// textOnly, yields a verified text-patch.
-func choosePatch(path string, base, want []byte, permitted string, textOnly bool) (patchChoice, error) {
+// textOnly, yields a verified text-patch. explicit reports that the target
+// already declares a json-patch override for this file: the user has
+// chosen canonicalization, so the YAML canonical-base gate is skipped.
+func choosePatch(path string, base, want []byte, permitted string, textOnly, explicit bool) (patchChoice, error) {
 	if !textOnly && permitted == config.StrategyJSONPatch && structuredExt(path) {
-		if c, ok := chooseJSONPatch(path, base, want); ok {
+		if c, ok := chooseJSONPatch(path, base, want, explicit); ok {
 			return c, nil
 		}
 	}
@@ -67,9 +70,11 @@ func choosePatch(path string, base, want []byte, permitted string, textOnly bool
 // YAML→JSON→YAML canonicalization: json-patch output canonicalizes the whole
 // file (comments dropped, anchors expanded, YAML 1.1 scalars such as `on`,
 // `yes` or `0755` resolved), and that must never rewrite keys the user did
-// not touch.
-func chooseJSONPatch(path string, base, want []byte) (patchChoice, bool) {
-	if !strings.HasSuffix(path, ".json") && !yamlCanonical(base) {
+// not touch — unless the target explicitly chose json-patch for the file
+// already (explicit), in which case every materialization canonicalizes it
+// anyway and honouring the choice is the only consistent outcome.
+func chooseJSONPatch(path string, base, want []byte, explicit bool) (patchChoice, bool) {
+	if !explicit && !strings.HasSuffix(path, ".json") && !yamlCanonical(base) {
 		return patchChoice{}, false
 	}
 	from, err := materialize.DecodeStructured(path, base)
@@ -189,6 +194,13 @@ func Repatch(dir string, out io.Writer, textOnly bool) error {
 	// patch — what repatch exists to fix) every file is re-derived.
 	current, err := t.materializeTree(srcTree, desc, t.cfg, oldPatches)
 	if err != nil {
+		// Only a failure in the override stage is repairable here; base
+		// already materialized with the same tree, descriptor and args,
+		// so anything else is unexpected and must surface.
+		var oe *materialize.OverrideError
+		if !errors.As(err, &oe) {
+			return err
+		}
 		current = nil
 	}
 	// Patch paths referenced by more than one override cannot be rewritten
@@ -234,7 +246,8 @@ func Repatch(dir string, out io.Writer, textOnly bool) error {
 			binaries = append(binaries, p)
 			continue
 		}
-		c, err := choosePatch(p, base[p], w, permitted[p], textOnly)
+		c, err := choosePatch(p, base[p], w, permitted[p], textOnly,
+			t.cfg.Overrides[p].Strategy == config.StrategyJSONPatch)
 		if err != nil {
 			return fmt.Errorf("repatch: %w", err)
 		}
