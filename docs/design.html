@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design — git-scaffold</title>
+<meta name="description" content="The design principles behind git-scaffold: declarative, Git-native, maintained not generated once, deterministic, transactional.">
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="site-inner">
+    <a class="brand" href="./index.html">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color: var(--accent)" aria-hidden="true"><path d="M9 4H5v16h4"/><path d="M15 4h4v16h-4"/><path d="M9 9h6M9 15h6"/></svg>
+      git-scaffold
+    </a>
+    <nav class="site-nav">
+      <a href="./getting-started.html">Getting started</a>
+      <a href="./commands.html">Commands</a>
+      <a href="./configuration.html">Configuration</a>
+      <a href="./design.html" aria-current="page">Design</a>
+      <a href="https://github.com/stephenc/git-scaffold">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<h1>Design</h1>
+
+<p class="lead">Everything in git-scaffold hangs off one invariant:</p>
+
+<blockquote>
+<p>Given the target configuration, locked upstream commit, upstream
+descriptor, target argument values and target patches, the expected contents
+of all scaffold-managed files are deterministic.</p>
+</blockquote>
+
+<p>Manual modifications to generated managed files are not a supported
+customization mechanism — and everything else follows from the principles
+below.</p>
+
+<h2>Principles</h2>
+
+<h3>Declarative</h3>
+<p>Configuration is data, not executable code. TOML throughout — no template
+language, no expressions, no conditionals or loops, no shell hooks, no
+embedded scripting. Remote scaffold content is treated as untrusted data, and
+a non-executable configuration keeps it that way.</p>
+
+<h3>Git-native</h3>
+<p>Sources are Git repositories and source versions are Git commits — any Git
+URL the installed Git supports, no hosting-provider API in the core. The
+executable is named <code>git-scaffold</code>, so it runs as
+<code>git scaffold …</code>.</p>
+
+<h3>Maintained, not generated once</h3>
+<p>The relationship with the source repository persists after initial
+creation. Targets explicitly update to later versions of their configured
+source — that is the point of the tool.</p>
+
+<h3>Source owns the scaffold interface</h3>
+<p>The source determines managed files, argument definitions, token
+representations, and allowed patch mechanisms. Targets provide values and
+intentional overrides. The argument name is the stable contract; token syntax
+stays the source's business.</p>
+
+<h3>Local divergence is explicit</h3>
+<p>Persistent differences from upstream must be represented by argument
+values, local patches, or native extension mechanisms of the managed format.
+The current contents of a generated file are never interpreted as an implicit
+local override.</p>
+
+<h3>Deterministic</h3>
+<p>Ordinary materialization uses the locked source commit. A moving
+branch, tag, or ref never silently changes generated output; advancing is
+always an explicit <code>update</code>.</p>
+
+<h3>Transactional</h3>
+<p>A failed update never leaves a partially updated repository or an advanced
+lock. Every modifying operation constructs and validates the complete result
+before changing anything.</p>
+
+<h3>Single repository</h3>
+<p><code>git-scaffold</code> operates on one Git worktree. Fleet management is
+outside its scope — external tools such as <code>gits</code> invoke it across
+a fleet:</p>
+
+<pre><code>gits --repo-host github.com --repo-contains example-org \
+    git scaffold update</code></pre>
+
+<h2>Deliberate omissions</h2>
+
+<p>v0.1 deliberately excludes: fleet management and repository discovery, a
+template language of any kind, path templating and destination remapping,
+automatic preservation of generated-file edits, three-way merging, fuzzy
+conflict resolution, multiple upstream sources, recursive scaffold
+resolution, and hosting-provider API clients (provider CLIs such as
+<code>gh</code> are used instead). Template inheritance needs no special
+mechanism: a template repository simply contains already-materialized files
+from its own source while exposing its own descriptor to consumers.</p>
+
+<h2>The full specification</h2>
+
+<p>The complete requirements specification — descriptor semantics, the
+materialization pipeline, security constraints, and the required test
+matrix — lives in
+<a href="https://github.com/stephenc/git-scaffold/blob/main/DESIGN.md">DESIGN.md</a>
+in the repository.</p>
+
+</main>
+
+<footer class="site">
+  <div class="site-inner">
+    <span><a href="https://github.com/stephenc/git-scaffold/blob/main/LICENSE">Apache License 2.0</a></span>
+    <span><a href="https://github.com/stephenc/git-scaffold">github.com/stephenc/git-scaffold</a></span>
+  </div>
+</footer>
+
+</body>
+</html>

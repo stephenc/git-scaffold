@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Configuration — git-scaffold</title>
+<meta name="description" content="Target configuration, source descriptor, arguments and tokens, globs, overrides and patches, the lock file, and global tool configuration.">
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="site-inner">
+    <a class="brand" href="./index.html">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color: var(--accent)" aria-hidden="true"><path d="M9 4H5v16h4"/><path d="M15 4h4v16h-4"/><path d="M9 9h6M9 15h6"/></svg>
+      git-scaffold
+    </a>
+    <nav class="site-nav">
+      <a href="./getting-started.html">Getting started</a>
+      <a href="./commands.html">Commands</a>
+      <a href="./configuration.html" aria-current="page">Configuration</a>
+      <a href="./design.html">Design</a>
+      <a href="https://github.com/stephenc/git-scaffold">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<h1>Configuration</h1>
+
+<p class="lead">Configuration is data, not code — plain TOML. The same format
+serves both sides: a repository may be a scaffold source, a scaffold target,
+or both at once. Every configuration starts with
+<code>[scaffold] version = 1</code>, and unknown versions or unknown keys are
+rejected.</p>
+
+<h2 id="target">Target configuration</h2>
+
+<p>A target repository keeps its scaffold metadata in
+<code>.git-scaffold/</code>:</p>
+
+<pre><code>.git-scaffold/
+    config.toml
+    lock
+    patches/
+        ...</code></pre>
+
+<p>The target's <code>config.toml</code> declares the upstream source, the
+argument values, and any explicit overrides:</p>
+
+<pre><code>[scaffold]
+version = 1
+
+[source]
+git = "https://github.com/acme/go-template.git"
+ref = "main"          <span class="cm"># optional; defaults to the remote HEAD</span>
+
+[args]
+project_name = "orders"
+module = "github.com/acme/orders"
+
+[overrides.".golangci.yml"]
+strategy = "json-patch"
+patches = [
+    "patches/golangci.json"
+]</code></pre>
+
+<p>Any Git URL syntax the installed Git supports may be used, and
+<code>ref</code> can be a branch, tag, or other ref — git-scaffold simply asks
+Git to resolve it to a commit.</p>
+
+<h2 id="descriptor">Source descriptor</h2>
+
+<p>A source repository declares its scaffold interface in its own
+<code>.git-scaffold/config.toml</code>: which files it manages, which
+arguments targets may or must provide, how those arguments appear as literal
+tokens, and which files permit structured patching.</p>
+
+<pre><code>[scaffold]
+version = 1
+
+[template]
+name = "go-service"
+
+[[arguments]]
+name = "project_name"
+description = "Project name"
+token = "@@PROJECT_NAME@@"
+
+[[arguments]]
+name = "module"
+description = "Go module path"           <span class="cm"># no default → required</span>
+
+[[arguments]]
+name = "go_version"
+default = "1.26"                         <span class="cm"># has a default → optional</span>
+token = "@@GO_VERSION@@"
+
+[[files]]
+path = "Makefile"
+
+[[files]]
+path = "go.mod"
+
+[files.arguments.module]
+token = "@@MODULE@@"                     <span class="cm"># per-rule token for this argument</span>
+
+[[files]]
+path = ".github/workflows/*.yml"
+
+[[files]]
+path = ".golangci.yml"
+patch = "json-patch"                     <span class="cm"># permits structured patching</span>
+
+[[files]]
+path = "examples/**/*"
+substitute = false                       <span class="cm"># no token substitution here</span>
+allow-empty = true                       <span class="cm"># glob may match zero files</span></code></pre>
+
+<p>Only files selected by <code>[[files]]</code> entries are managed; other
+files in the source repository are irrelevant to synchronization. This lets
+the source simultaneously be an ordinary GitHub template repository holding
+additional one-time scaffolding content.</p>
+
+<h3>Arguments and tokens</h3>
+
+<p>There is no template language. Substitution is literal token replacement:
+with token <code>@@PROJECT_NAME@@</code> and value <code>orders</code>,
+<code>github.com/acme/@@PROJECT_NAME@@</code> becomes
+<code>github.com/acme/orders</code>. The token can be any literal string the
+source author chooses — <code>@@NAME@@</code>,
+<code>{{ project.name }}</code>, <code>__NAME__</code> — it is never
+interpreted as a pattern or expression. All replacements in a file operate
+simultaneously against the original content, so a value containing another
+token is never re-expanded.</p>
+
+<p>Value resolution per argument: the target's value, else the source's
+<code>default</code>, else an error. The argument <em>name</em> is the stable
+contract between source and target — targets never need to know token
+syntax. Rules may override the token per file rule
+(<code>[files.arguments.&lt;name&gt;] token = "…"</code>), disable one
+argument for a rule (<code>enabled = false</code>), or disable substitution
+for a rule entirely (<code>substitute = false</code>).</p>
+
+<h3>Globs</h3>
+
+<p>A <code>[[files]]</code> path is either an exact file or a glob:
+<code>*</code> (within one path component), <code>?</code> (one character),
+and <code>**</code> (across components), matched with <code>/</code>
+separators against the source Git tree at the selected commit. Expansion is
+deterministic: matches are normalized and sorted lexicographically. An exact
+path that does not exist is an error; a glob matching zero files is an error
+unless the rule sets <code>allow-empty = true</code>.</p>
+
+<h3 id="precedence">Exact trumps glob — and nothing else</h3>
+
+<p>When file rules overlap, exactly one form of precedence exists: an
+<strong>exact path</strong> overrides a <strong>glob</strong> that also
+matches it. There is no "more specific glob beats less specific glob" — two
+globs (or two exact rules) matching the same file must imply identical
+behavior, or the descriptor is rejected as ambiguous. Declaration order never
+resolves a conflict.</p>
+
+<p>This is by design, not a missing feature. Specificity ordering between
+patterns invites descriptors whose behavior a reader has to compute rather
+than read. If one file in a globbed directory needs different treatment, name
+it — the carve-out is then visible at a glance. The nudge is intentional:
+scaffold only what you need, with the smallest, most explicit rule set that
+says it.</p>
+
+<h2 id="patches">Overrides and patches</h2>
+
+<p>A target declares patches against concrete repository-relative paths, with
+patch files stored relative to <code>.git-scaffold/</code> and applied in
+declaration order, after token substitution:</p>
+
+<pre><code>[overrides."config/production/service.yml"]
+strategy = "json-patch"
+patches = [
+    "patches/production-service.json"
+]</code></pre>
+
+<p>Two strategies exist in v0.1:</p>
+
+<ul>
+  <li><strong><code>text-patch</code></strong> — conventional unified-diff
+  patching. It is <em>always</em> available to targets as the universal escape
+  hatch, against any managed file, whether or not its rule declares
+  <code>patch</code>.</li>
+  <li><strong><code>json-patch</code></strong> — RFC 6902 JSON Patch against
+  JSON and YAML files. A structured strategy is available only where the
+  source rule permits it with <code>patch = "json-patch"</code>.</li>
+</ul>
+
+<p>A failed patch fails materialization — there is no silent repair, fuzzy
+application, or three-way merge. If a downstream patch is incompatible with a
+new upstream version, human resolution is required; a failed
+<code>update</code> leaves everything, lock included, unchanged.</p>
+
+<div class="note">
+Prefer native extension mechanisms over patches where the format offers one —
+a <code>Makefile</code> with <code>-include Makefile.local</code>, reusable CI
+workflows, native configuration includes. The source owns the managed file;
+the target owns the local extension file.
+</div>
+
+<h2 id="lock">Lock file</h2>
+
+<p><code>.git-scaffold/lock</code> pins the exact source commit currently
+materialized. Its complete contents are one full commit SHA and a
+newline:</p>
+
+<pre><code>71db8b7497d60831eae98e2d9b70548fdb39f714</code></pre>
+
+<p>No URL, no timestamp, no hashes, no tool version. The configuration
+describes the desired source lineage; the lock identifies the exact commit.
+Commit both.</p>
+
+<h2 id="propose">Custom proposal command</h2>
+
+<p>For hosting providers without built-in support, a target may configure the
+command <code>propose</code> runs to create the pull/merge request. It is an
+argument array, executed directly without a shell, with
+<code>{{ branch }}</code>, <code>{{ title }}</code>, and
+<code>{{ body_file }}</code> placeholders (independent of scaffold argument
+substitution):</p>
+
+<pre><code>[propose]
+create-command = [
+    "forge", "pr", "create",
+    "--head", "{{ branch }}",
+    "--title", "{{ title }}",
+    "--body-file", "{{ body_file }}"
+]</code></pre>
+
+<h2 id="tool">Global tool configuration</h2>
+
+<p>Separate from any repository, optional per-user defaults live in
+<code>$XDG_CONFIG_HOME/git-scaffold/config.toml</code>
+(<code>~/.config/git-scaffold/config.toml</code> by default; plain XDG on
+every platform, matching git's own handling). An absent file leaves the tool
+fully functional. Nothing here affects deterministic output.</p>
+
+<pre><code>cache-dir = "~/.cache/git-scaffold"  <span class="cm"># where source repos are cached</span>
+
+[update-check]
+enabled = true
+interval = "24h"                     <span class="cm"># Go duration string</span></code></pre>
+
+<p>Cache location precedence: <code>$GIT_SCAFFOLD_CACHE</code>, else
+<code>cache-dir</code>, else <code>$XDG_CACHE_HOME/git-scaffold</code>, else
+<code>~/.cache/git-scaffold</code>. The cache is an implementation detail and
+never affects output; a locked commit that is available locally lets
+<code>check</code>, <code>diff</code>, and <code>apply</code> run without
+network access.</p>
+
+<h3>Update check</h3>
+
+<p>At most once per <code>interval</code>, and only when stderr is a
+terminal, git-scaffold checks GitHub for a newer release and prints a
+one-line notice to stderr after command output. The check never delays a
+command by more than 2 seconds, never changes an exit status, never writes to
+stdout, and treats any HTTP failure as a silent no-op. It does not run
+when:</p>
+
+<ul>
+  <li><code>update-check.enabled = false</code> in the global configuration;</li>
+  <li>the <code>GIT_SCAFFOLD_NO_UPDATE_CHECK</code> environment variable is non-empty;</li>
+  <li>the <code>CI</code> environment variable is non-empty;</li>
+  <li>stderr is not a terminal;</li>
+  <li>the running version is not a plain semver (dev builds never prompt).</li>
+</ul>
+
+</main>
+
+<footer class="site">
+  <div class="site-inner">
+    <span><a href="https://github.com/stephenc/git-scaffold/blob/main/LICENSE">Apache License 2.0</a></span>
+    <span><a href="https://github.com/stephenc/git-scaffold">github.com/stephenc/git-scaffold</a></span>
+  </div>
+</footer>
+
+</body>
+</html>

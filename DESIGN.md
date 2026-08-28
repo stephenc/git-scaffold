@@ -336,11 +336,18 @@ Filesystem enumeration order MUST NOT affect materialization.
 
 ### 9.5 Overlapping Rules
 
-Multiple `[[files]]` entries MAY match the same source file only if
-their effective configuration is identical.
+An exact (non-glob) `[[files]]` entry is more specific than a glob
+entry. If a file is matched by both an exact entry and one or more glob
+entries, the exact entry alone governs that file. This allows a glob to
+manage a directory while an exact rule carves out different behavior
+for one file within it.
 
-If overlapping entries imply different substitution or patch behavior,
-the descriptor MUST be rejected as ambiguous.
+Otherwise — multiple glob entries, or multiple exact entries, matching
+the same source file — the overlap is permitted only if their effective
+configuration is identical.
+
+If such overlapping entries imply different substitution or patch
+behavior, the descriptor MUST be rejected as ambiguous.
 
 Declaration order MUST NOT resolve conflicting rules.
 
@@ -640,11 +647,18 @@ path = "config/**/*.yml"
 patch = "json-patch"
 ```
 
-The source controls whether and how the concrete file may be patched.
+`text-patch` is ALWAYS available to targets as the universal escape
+hatch: a target MAY declare `text-patch` overrides against any managed
+file, whether or not its rule declares `patch`.
 
-A target MUST NOT choose a patch strategy not permitted by the source.
+A rule's `patch = "<strategy>"` declaration additionally permits that
+structured strategy (currently `json-patch`) for the matched files.
 
-A source file/rule without `patch` does not permit target patching.
+A target MUST NOT choose a structured patch strategy not permitted by
+the source.
+
+A source file/rule without `patch` does not permit *structured* target
+patching; `text-patch` remains available.
 
 ## 24. Target Overrides
 
@@ -737,6 +751,9 @@ version, human resolution is required.
 
 V0.1 MUST support a `text-patch` escape hatch using conventional
 unified-diff semantics.
+
+Per §23, `text-patch` is always permitted regardless of a rule's
+`patch` declaration.
 
 Failure to apply a text patch MUST fail materialization.
 
@@ -872,6 +889,33 @@ If required arguments have not been supplied, initialization MUST fail
 clearly.
 
 Interactive prompting is not required for v0.1.
+
+### `--existing`
+
+`init --existing` adopts a scaffold into an existing repository whose
+files already differ from the scaffold.
+
+When a managed file already exists in the worktree and its content
+differs from the materialization, init MUST record the difference as a
+`text-patch` override — a unified diff of materialized → existing
+content — stored under `.git-scaffold/patches/` and registered in
+`[overrides]`. The pre-existing file itself MUST NOT be modified.
+
+Files whose content already matches the materialization exactly need no
+patch. Managed files absent from the worktree are materialized as with
+plain init.
+
+After `init --existing`, `check` MUST pass without any pre-existing
+file having been modified.
+
+Limit: for binary-looking files (content containing NUL bytes) a
+unified text diff is not meaningful. Differing binary files MUST cause
+a refusal that reports them; `--force` is required to overwrite them.
+With `--existing --force`, `--force` resolves only such binary
+refusals — text-adoptable files are still adopted, not overwritten.
+
+`--existing` with no pre-existing differing files behaves like plain
+init.
 
 ## 34. `git scaffold check`
 
@@ -1301,6 +1345,7 @@ At minimum, tests MUST cover:
 -   deterministic lexical ordering;
 -   overlapping identical rules;
 -   overlapping conflicting rules;
+-   exact rule taking precedence over an overlapping glob rule;
 -   missing exact managed source file;
 -   source update adding a file matching an existing glob;
 -   source update removing a file matching an existing glob;
@@ -1332,7 +1377,8 @@ At minimum, tests MUST cover:
 
 ### Patches
 
--   unauthorized target patch;
+-   unauthorized structured target patch;
+-   `text-patch` override accepted on a rule without `patch`;
 -   patch permission inherited from a glob;
 -   concrete target override of a glob-managed file;
 -   rejection of glob target overrides;
@@ -1359,7 +1405,10 @@ At minimum, tests MUST cover:
 -   successful update writing lock only after successful
     materialization;
 -   `apply` not advancing an existing lock;
--   `outdated` not modifying state.
+-   `outdated` not modifying state;
+-   `init --existing` adopting differing files as text patches
+    (worktree untouched, `check` clean immediately after, binary
+    refusal without `--force`).
 
 ### Proposals/safety
 
@@ -1510,3 +1559,61 @@ core.
 
 Correct deterministic synchronization is higher priority than proposal
 automation.
+
+## 56. Tool Configuration and Update Check
+
+This section covers tool infrastructure, not scaffold behavior. Nothing
+here may affect deterministic output (§17, §50).
+
+### Global tool configuration
+
+An optional per-user file `$XDG_CONFIG_HOME/git-scaffold/config.toml`
+(else `~/.config/git-scaffold/config.toml`; plain XDG on every platform,
+matching git's own XDG handling) configures the tool. An absent file
+MUST leave the tool fully functional with defaults.
+
+Keys (all optional):
+
+-   `cache-dir` — the source cache location (§50). A leading `~/` MUST
+    expand to the user's home directory. Precedence:
+    `$GIT_SCAFFOLD_CACHE` env, else `cache-dir`, else
+    `$XDG_CACHE_HOME/git-scaffold`, else `~/.cache/git-scaffold`.
+-   `[update-check]` `enabled` — boolean, default `true`.
+-   `[update-check]` `interval` — Go duration string, default `"24h"`.
+    MUST be positive.
+
+Unknown keys MUST be rejected with a clear error (typo protection), as
+with the target configuration.
+
+### Update check
+
+At most once per `interval`, a command MAY check the latest release by
+requesting `https://github.com/stephenc/git-scaffold/releases/latest`
+with redirects disabled and reading the release tag from the `Location`
+header. No hosting-provider API client (§51). Request timeout MUST be
+at most 2 seconds; any HTTP failure MUST be a silent no-op.
+
+When the latest release is a newer semver than the running version, the
+tool MUST print exactly one notice line, to stderr only, after command
+output. The `version` command included.
+
+The check MUST NOT run when:
+
+-   `update-check.enabled = false`;
+-   `$GIT_SCAFFOLD_NO_UPDATE_CHECK` is non-empty;
+-   `$CI` is non-empty;
+-   stderr is not a terminal;
+-   the running version is not a plain semver (dev builds never
+    prompt).
+
+Last-check state (mtime = last check, content = last-seen tag) lives in
+`$XDG_STATE_HOME/git-scaffold/update-check` (else
+`~/.local/state/git-scaffold/update-check`). Unreadable or unwritable
+state MUST be a silent no-op. The state MUST record every attempt, not
+only successes: a failed check bumps the mtime (preserving the
+last-seen-tag content) so a persistently failing network does not
+re-attempt on every command within the interval.
+
+The check MUST NOT delay a command by more than 2 seconds in total (the
+request timeout MUST fit within that bound), MUST NOT change any exit
+status, and MUST NOT write to stdout.

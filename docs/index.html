@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>git-scaffold — maintained scaffolding for Git repositories</title>
+<meta name="description" content="git-scaffold maintains a selected set of files in a Git repository from an upstream Git repository. Not a one-shot generator.">
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="site-inner">
+    <a class="brand" href="./index.html">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color: var(--accent)" aria-hidden="true"><path d="M9 4H5v16h4"/><path d="M15 4h4v16h-4"/><path d="M9 9h6M9 15h6"/></svg>
+      git-scaffold
+    </a>
+    <nav class="site-nav">
+      <a href="./getting-started.html">Getting started</a>
+      <a href="./commands.html">Commands</a>
+      <a href="./configuration.html">Configuration</a>
+      <a href="./design.html">Design</a>
+      <a href="https://github.com/stephenc/git-scaffold">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<section class="hero">
+  <h1>Scaffolding that stays maintained</h1>
+  <p class="tagline"><code>git-scaffold</code> maintains a selected set of files in a Git
+  repository from an upstream Git repository — <strong>not a one-shot
+  generator</strong>. The relationship with the upstream scaffold persists, and
+  targets explicitly update to later versions of their configured source.</p>
+  <div class="cta">
+    <a class="btn primary" href="./getting-started.html">Get started</a>
+    <a class="btn" href="https://github.com/stephenc/git-scaffold/releases">Download</a>
+  </div>
+</section>
+
+<pre><code><span class="cm"># installed as git-scaffold, it runs as a Git subcommand</span>
+git scaffold init https://github.com/acme/go-template.git
+git scaffold check      <span class="cm"># do managed files match the locked materialization?</span>
+git scaffold diff       <span class="cm"># show the differences</span>
+git scaffold update     <span class="cm"># move to the latest upstream commit, transactionally</span>
+git scaffold outdated   <span class="cm"># has the upstream ref advanced past the lock?</span></code></pre>
+
+<h2>How it works</h2>
+
+<p>A target repository declares, in <code>.git-scaffold/config.toml</code>, an
+upstream scaffold repository, values for the arguments that scaffold defines,
+and explicit local patches where the target intentionally differs. The
+upstream repository's own <code>.git-scaffold/config.toml</code> declares which
+files it manages, which arguments targets may or must provide, and which files
+may be patched.</p>
+
+<p>The exact upstream commit in use is recorded in
+<code>.git-scaffold/lock</code>. Given the configuration, the locked commit,
+the argument values, and the patches, the contents of every managed file are
+deterministic. Manual edits to managed files are not a customization
+mechanism — <code>git scaffold check</code> reports them as discrepancies.</p>
+
+<h2>Highlights</h2>
+
+<ul class="features">
+  <li>
+    <h3>Deterministic materialization</h3>
+    <p>A lock file pins the exact upstream commit. Config + lock + arguments +
+    patches fully determine every managed file, byte for byte. A moving branch
+    never silently changes output.</p>
+  </li>
+  <li>
+    <h3>Divergence is explicit</h3>
+    <p>Local differences live in argument values and declared patches, never in
+    silent edits. <code>text-patch</code> is always available as the universal
+    escape hatch; structured strategies like <code>json-patch</code> are
+    opt-in per file rule.</p>
+  </li>
+  <li>
+    <h3>Transactional updates</h3>
+    <p>Every modifying operation validates the complete result before touching
+    the working tree. A failed update changes nothing — no half-updated files,
+    no advanced lock.</p>
+  </li>
+  <li>
+    <h3>Adopt existing repositories</h3>
+    <p><code>git scaffold init --existing</code> brings a repository that
+    already has content under management, guaranteed: every divergence is
+    captured as a visible patch and <code>check</code> is clean immediately.</p>
+  </li>
+  <li>
+    <h3>Fleet-friendly</h3>
+    <p><code>git-scaffold</code> operates on one repository. Fleet tools such
+    as <code>gits</code> can run it across an organization:
+    <code>gits --repo-contains example-org git scaffold update</code>.</p>
+  </li>
+  <li>
+    <h3>No template language</h3>
+    <p>Configuration is declarative TOML; substitution is literal token
+    replacement. No expressions, no hooks, no scripting — scaffold behavior a
+    reader can read, not compute.</p>
+  </li>
+</ul>
+
+<h2>Learn more</h2>
+
+<ul>
+  <li><a href="./getting-started.html">Getting started</a> — install and walk through the full cycle.</li>
+  <li><a href="./commands.html">Commands</a> — reference for every subcommand.</li>
+  <li><a href="./configuration.html">Configuration</a> — target config, source descriptor, patches, lock file.</li>
+  <li><a href="./design.html">Design</a> — the principles and the central invariant.</li>
+</ul>
+
+</main>
+
+<footer class="site">
+  <div class="site-inner">
+    <span><a href="https://github.com/stephenc/git-scaffold/blob/main/LICENSE">Apache License 2.0</a></span>
+    <span><a href="https://github.com/stephenc/git-scaffold">github.com/stephenc/git-scaffold</a></span>
+  </div>
+</footer>
+
+</body>
+</html>

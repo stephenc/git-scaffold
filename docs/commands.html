@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Commands — git-scaffold</title>
+<meta name="description" content="Reference for git scaffold init, check, diff, apply, update, outdated, propose, and version.">
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="site-inner">
+    <a class="brand" href="./index.html">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color: var(--accent)" aria-hidden="true"><path d="M9 4H5v16h4"/><path d="M15 4h4v16h-4"/><path d="M9 9h6M9 15h6"/></svg>
+      git-scaffold
+    </a>
+    <nav class="site-nav">
+      <a href="./getting-started.html">Getting started</a>
+      <a href="./commands.html" aria-current="page">Commands</a>
+      <a href="./configuration.html">Configuration</a>
+      <a href="./design.html">Design</a>
+      <a href="https://github.com/stephenc/git-scaffold">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<h1>Command reference</h1>
+
+<p class="lead">Installed as <code>git-scaffold</code>, every command runs as
+a Git subcommand: <code>git scaffold &lt;command&gt;</code>. Commands may be
+executed from any subdirectory of the worktree — the tool locates the actual
+worktree root itself.</p>
+
+<ul>
+  <li><a href="#init"><code>init</code></a> ·
+      <a href="#check"><code>check</code></a> ·
+      <a href="#diff"><code>diff</code></a> ·
+      <a href="#apply"><code>apply</code></a> ·
+      <a href="#update"><code>update</code></a> ·
+      <a href="#outdated"><code>outdated</code></a> ·
+      <a href="#propose"><code>propose</code></a> ·
+      <a href="#version"><code>version</code></a></li>
+</ul>
+
+<h2 id="init"><code>git scaffold init</code></h2>
+
+<p>Initialize this repository from an upstream scaffold.</p>
+
+<pre><code>git scaffold init &lt;git-url&gt; [--ref &lt;ref&gt;] [--arg name=value]... [--existing] [--force]</code></pre>
+
+<p>Verifies the current directory belongs to a Git worktree, creates
+<code>.git-scaffold/config.toml</code>, resolves the source, reads and
+validates the source descriptor, expands the managed file set, materializes
+the scaffold, and writes <code>.git-scaffold/lock</code>. If a required
+argument has not been supplied, initialization fails clearly.</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Flag</th><th>Meaning</th></tr>
+  <tr><td><code>--ref &lt;ref&gt;</code></td>
+      <td>Source ref (branch, tag, or commit); defaults to the remote HEAD.</td></tr>
+  <tr><td><code>--arg name=value</code></td>
+      <td>Scaffold argument value (repeatable).</td></tr>
+  <tr><td><code>--existing</code></td>
+      <td>Adopt differing existing files as <code>text-patch</code> overrides
+      under <code>.git-scaffold/patches/</code>, leaving the pre-existing
+      files untouched. <code>check</code> passes immediately afterwards.</td></tr>
+  <tr><td><code>--force</code></td>
+      <td>Overwrite differing existing files. Combined with
+      <code>--existing</code>, resolves only binary-file refusals — files with
+      a meaningful text diff are still adopted, not overwritten.</td></tr>
+</table>
+</div>
+
+<h2 id="check"><code>git scaffold check</code></h2>
+
+<p>Verify managed files match the locked materialization.</p>
+
+<pre><code>git scaffold check</code></pre>
+
+<p>Reconstructs the expected contents from the target config, the lock, the
+source descriptor at the locked commit, the resolved arguments, and the
+target patches, then compares against the working tree. It never resolves the
+moving source ref merely to check for updates, and avoids network access when
+the locked commit is available locally.</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Exit code</th><th>Meaning</th></tr>
+  <tr><td><code>0</code></td><td>All managed files are correct.</td></tr>
+  <tr><td><code>1</code></td><td>Differences, or a configuration/materialization problem.</td></tr>
+</table>
+</div>
+
+<h2 id="diff"><code>git scaffold diff</code></h2>
+
+<p>Show differences between the working tree and the locked materialization.</p>
+
+<pre><code>git scaffold diff</code></pre>
+
+<p>Calculates the expected materialization from the locked commit and
+displays the differences as an ordinary unified diff. Never modifies the
+repository.</p>
+
+<h2 id="apply"><code>git scaffold apply</code></h2>
+
+<p>Make the working tree match the locked materialization.</p>
+
+<pre><code>git scaffold apply [--force]</code></pre>
+
+<p>Materializes the currently locked source. It never advances an existing
+lock because the configured ref has moved; if no lock exists yet, it may
+resolve the configured source and create the initial lock. A managed file
+that also carries unrelated local modifications causes a safe failure rather
+than silent loss of work.</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Flag</th><th>Meaning</th></tr>
+  <tr><td><code>--force</code></td>
+      <td>Discard local modifications to managed files.</td></tr>
+</table>
+</div>
+
+<h2 id="update"><code>git scaffold update</code></h2>
+
+<p>Update managed files to the currently resolved source ref.</p>
+
+<pre><code>git scaffold update [--force]</code></pre>
+
+<p>Resolves the configured source/ref again. If it resolves to the currently
+locked SHA, no update is required. Otherwise it constructs the complete new
+materialization — new descriptor, expanded globs, arguments, patches —
+validates the entire result, determines additions, modifications, and
+deletions (files leaving the managed set are deleted), writes the files, and
+updates the lock.</p>
+
+<p>The operation is transactional: on any failure, no managed file changes
+and the lock stays unchanged.</p>
+
+<pre><code>$ git scaffold update
+Updating scaffold
+
+71db8b7 → 93ca782
+
+error: .golangci.yml
+patches/golangci.json: operation 4 failed:
+path /run/timeout does not exist
+
+No files changed.</code></pre>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Flag</th><th>Meaning</th></tr>
+  <tr><td><code>--force</code></td>
+      <td>Discard local modifications to managed files.</td></tr>
+</table>
+</div>
+
+<h2 id="outdated"><code>git scaffold outdated</code></h2>
+
+<p>Report whether the source ref has advanced past the lock.</p>
+
+<pre><code>git scaffold outdated</code></pre>
+
+<p>Resolves the configured source/ref without modifying any target state and
+compares it with the locked SHA. Made for scripting and CI:</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Exit code</th><th>Meaning</th></tr>
+  <tr><td><code>0</code></td><td>Current — the lock matches the resolved ref.</td></tr>
+  <tr><td><code>1</code></td><td>An update is available.</td></tr>
+  <tr><td><code>2</code></td><td>Error (unresolvable source, missing configuration, …).</td></tr>
+</table>
+</div>
+
+<h2 id="propose"><code>git scaffold propose</code></h2>
+
+<p>Propose a scaffold update via a pushed branch and pull request.</p>
+
+<pre><code>git scaffold propose [--branch &lt;name&gt;]</code></pre>
+
+<p>Performs the update on a tool-owned proposal branch
+(<code>git-scaffold/update</code> by default), commits
+(<code>chore: update repository scaffold</code>), pushes with safe
+force-update semantics, and creates a pull request if necessary — on
+github.com via the <code>gh</code> CLI. Repeated runs refresh the same branch
+and proposal rather than opening duplicates; when no update exists, no commit
+and no proposal are created. For unknown hosting providers the branch is
+still pushed, and the tool reports that automatic PR creation is unavailable.
+A custom creation command can be configured — see
+<a href="./configuration.html#propose">configuration</a>.</p>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Flag</th><th>Meaning</th></tr>
+  <tr><td><code>--branch &lt;name&gt;</code></td>
+      <td>Proposal branch name (default <code>git-scaffold/update</code>).</td></tr>
+</table>
+</div>
+
+<h2 id="version"><code>git scaffold version</code></h2>
+
+<p>Print the version of git-scaffold.</p>
+
+<pre><code>$ git scaffold version
+git-scaffold 0.1.0</code></pre>
+
+<p>Like every command, it may print a one-line newer-release notice to stderr
+when the periodic <a href="./configuration.html#tool">update check</a> found
+one.</p>
+
+</main>
+
+<footer class="site">
+  <div class="site-inner">
+    <span><a href="https://github.com/stephenc/git-scaffold/blob/main/LICENSE">Apache License 2.0</a></span>
+    <span><a href="https://github.com/stephenc/git-scaffold">github.com/stephenc/git-scaffold</a></span>
+  </div>
+</footer>
+
+</body>
+</html>

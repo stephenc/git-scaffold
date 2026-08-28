@@ -1,0 +1,5 @@
+.idea/
+# The binary that `go build` writes beside the source.
+/git-scaffold
+/git-scaffold.exe
+/dist/

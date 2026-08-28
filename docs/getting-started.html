@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting started — git-scaffold</title>
+<meta name="description" content="Install git-scaffold and walk through the init, check, diff, apply, update, outdated cycle.">
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="site-inner">
+    <a class="brand" href="./index.html">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="color: var(--accent)" aria-hidden="true"><path d="M9 4H5v16h4"/><path d="M15 4h4v16h-4"/><path d="M9 9h6M9 15h6"/></svg>
+      git-scaffold
+    </a>
+    <nav class="site-nav">
+      <a href="./getting-started.html" aria-current="page">Getting started</a>
+      <a href="./commands.html">Commands</a>
+      <a href="./configuration.html">Configuration</a>
+      <a href="./design.html">Design</a>
+      <a href="https://github.com/stephenc/git-scaffold">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<h1>Getting started</h1>
+
+<h2>Install</h2>
+
+<p>With Go on the machine, one command installs the latest release:</p>
+
+<pre><code>go install github.com/stephenc/git-scaffold@latest</code></pre>
+
+<p>Or take a prebuilt binary from the
+<a href="https://github.com/stephenc/git-scaffold/releases">releases page</a>.
+On Linux and macOS:</p>
+
+<pre><code>dir=$(mktemp -d) &amp;&amp;
+archive="git-scaffold-$(uname -s)-$(uname -m).tar.gz" &amp;&amp;
+curl -fsSL -o "$dir/$archive" \
+  "https://github.com/stephenc/git-scaffold/releases/latest/download/$archive" &amp;&amp;
+curl -fsSL -o "$dir/$archive.sha256" \
+  "https://github.com/stephenc/git-scaffold/releases/latest/download/$archive.sha256" &amp;&amp;
+if command -v sha256sum &gt;/dev/null
+then (cd "$dir" &amp;&amp; sha256sum -c "$archive.sha256")
+else (cd "$dir" &amp;&amp; shasum -a 256 -c "$archive.sha256")
+fi &amp;&amp;
+tar -xzf "$dir/$archive" -C "$dir" git-scaffold &amp;&amp;
+mkdir -p ~/.local/bin &amp;&amp;
+install -m 755 "$dir/git-scaffold" ~/.local/bin/git-scaffold
+[ -n "$dir" ] &amp;&amp; rm -rf "$dir"
+command -v git-scaffold</code></pre>
+
+<p>These commands write into a temporary directory, not the directory you are
+in. The two <code>curl</code> lines take the archive and the
+<code>.sha256</code> file that the release holds beside it, and the check
+compares the two. <code>install</code> puts <code>git-scaffold</code> in
+<code>~/.local/bin</code>, replacing a <code>git-scaffold</code> that is
+already there. If <code>command -v git-scaffold</code> shows nothing, add
+<code>~/.local/bin</code> to the path of this shell.</p>
+
+<p>On Windows, take <code>git-scaffold-Windows-x86_64.zip</code> (or
+<code>git-scaffold-Windows-arm64.zip</code> for an ARM machine), check it
+against the <code>.sha256</code> file beside it, and put the
+<code>git-scaffold.exe</code> that it holds in a directory on your
+<code>PATH</code>.</p>
+
+<p>The binaries hold no dynamic library, so each one runs on any machine of
+its system and architecture. Every command needs <code>git</code> on the
+path. Once <code>git-scaffold</code> is on the path, Git finds it as a
+subcommand: <code>git scaffold …</code>.</p>
+
+<h2>Initialize from a scaffold</h2>
+
+<p>Inside a Git worktree, point <code>init</code> at an upstream scaffold
+repository — any repository whose own <code>.git-scaffold/config.toml</code>
+declares the files it manages:</p>
+
+<pre><code>git scaffold init https://github.com/acme/go-template.git \
+  --arg project_name=orders \
+  --arg module=github.com/acme/orders</code></pre>
+
+<p>This creates <code>.git-scaffold/config.toml</code>, resolves the source,
+materializes every managed file, and writes the exact upstream commit to
+<code>.git-scaffold/lock</code>. Arguments without a source-side default are
+required; if one is missing, init fails clearly and tells you which. Add
+<code>--ref &lt;ref&gt;</code> to track a branch or tag other than the remote
+HEAD.</p>
+
+<p>Commit all of <code>.git-scaffold/</code> along with the materialized
+files.</p>
+
+<h2>The everyday cycle</h2>
+
+<pre><code>git scaffold check      <span class="cm"># exit 0: managed files match the locked materialization</span>
+git scaffold diff       <span class="cm"># unified diff of working tree vs. locked materialization</span>
+git scaffold apply      <span class="cm"># make the working tree match what is locked</span>
+git scaffold update     <span class="cm"># re-resolve the ref and move to the new commit</span>
+git scaffold outdated   <span class="cm"># exit 1 when an update is available</span></code></pre>
+
+<p><code>check</code>, <code>diff</code>, and <code>apply</code> work against
+the <em>locked</em> commit — they never advance the lock just because the
+configured branch moved, and they avoid network access when the locked commit
+is available locally. Moving forward is always an explicit act:</p>
+
+<pre><code>$ git scaffold update
+Updating scaffold
+
+source: https://github.com/acme/go-template.git
+ref:    main
+
+71db8b7 → 93ca782
+
+M .golangci.yml
+M Makefile
+A .github/workflows/security.yml
+D .github/workflows/old-ci.yml</code></pre>
+
+<p>Updates are transactional: the complete new result is constructed and
+validated first, and on any failure — an argument problem, a patch that no
+longer applies — no files change and the lock stays where it was. Use
+<code>git scaffold outdated</code> in CI or cron to detect available updates
+cheaply, and <code>git scaffold propose</code> to turn an update into a
+pushed branch and pull request.</p>
+
+<h2>Adopting an existing repository</h2>
+
+<p>A repository that already has content — its own <code>Makefile</code>, its
+own workflows — can come under scaffold management without a scary overwrite
+step:</p>
+
+<pre><code>git scaffold init --existing https://github.com/acme/go-template.git \
+  --arg project_name=orders \
+  --arg module=github.com/acme/orders</code></pre>
+
+<p>Any managed file that differs from the scaffold's materialization is
+captured as an explicit <code>text-patch</code> override under
+<code>.git-scaffold/patches/</code> — a unified diff from materialized to
+existing content. The pre-existing files themselves are not modified, and
+<code>git scaffold check</code> is clean immediately. Every divergence is now
+a visible patch you can whittle away over time.</p>
+
+<div class="note">
+For binary-looking files (content containing NUL bytes) a text diff is not
+meaningful, so differing binary files cause a refusal that reports them.
+Adding <code>--force</code> alongside <code>--existing</code> overwrites only
+those binary files — text-adoptable files are still adopted, not overwritten.
+</div>
+
+<h2>Next steps</h2>
+
+<ul>
+  <li><a href="./commands.html">Command reference</a> — flags, exit codes, and behavior for every subcommand.</li>
+  <li><a href="./configuration.html">Configuration</a> — write your own scaffold source, declare patches, tune the tool.</li>
+</ul>
+
+</main>
+
+<footer class="site">
+  <div class="site-inner">
+    <span><a href="https://github.com/stephenc/git-scaffold/blob/main/LICENSE">Apache License 2.0</a></span>
+    <span><a href="https://github.com/stephenc/git-scaffold">github.com/stephenc/git-scaffold</a></span>
+  </div>
+</footer>
+
+</body>
+</html>
