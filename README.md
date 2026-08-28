@@ -19,6 +19,7 @@ git scaffold diff
 git scaffold apply
 git scaffold update
 git scaffold outdated
+git scaffold repatch
 git scaffold propose
 ```
 
@@ -42,12 +43,31 @@ discrepancies.
 
 `git scaffold init --existing` brings a repository that already has content
 under scaffold management, guaranteed: any managed file that differs from the
-scaffold's materialization is captured as an explicit `text-patch` override
-under `.git-scaffold/patches/`, so `git scaffold check` is clean immediately
-and every divergence is visible as a patch you can whittle away over time.
-`text-patch` is always available to targets as the universal escape hatch;
-structured strategies such as `json-patch` require the scaffold to permit
-them per file rule.
+scaffold's materialization is captured as an explicit override under
+`.git-scaffold/patches/`, so `git scaffold check` is clean immediately and
+every divergence is visible as a patch you can whittle away over time.
+Where the scaffold permits `json-patch` for a JSON or YAML file and both
+sides parse, the difference is captured as a structured RFC 6902 patch and
+the file is normalized to the canonical serialization; everything else
+becomes a `text-patch` with the file left byte-for-byte untouched. Note
+that json-patch application canonicalizes YAML — comments are dropped,
+anchors expanded, YAML 1.1 scalars such as `on`, `yes` or `0755` resolved —
+so YAML takes the structured route only when the scaffold's own file
+already round-trips unchanged; pass `--text-patch` to capture everything as
+text patches and avoid canonicalization entirely. `text-patch` is always
+available to targets as the universal escape hatch; structured strategies
+such as `json-patch` require the scaffold to permit them per file rule.
+
+## Evolving overrides
+
+Managed files are outputs, so hand edits show up as discrepancies in
+`git scaffold check`. To keep an edit, run `git scaffold repatch`: it reads
+the current content of every managed file and rewrites the overrides and
+patch files to reproduce it — one patch per file, `json-patch` where
+permitted (or `text-patch` with `--text-patch`), files that `check` already
+accepts left alone, overrides dropped for files returned to the scaffold's
+content, stale patch files deleted, and the comments in `config.toml`
+preserved. `check` passes right afterwards.
 
 ## Tool configuration
 

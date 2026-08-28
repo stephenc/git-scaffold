@@ -138,11 +138,19 @@ step:</p>
   --arg module=github.com/acme/orders</code></pre>
 
 <p>Any managed file that differs from the scaffold's materialization is
-captured as an explicit <code>text-patch</code> override under
-<code>.git-scaffold/patches/</code> — a unified diff from materialized to
-existing content. The pre-existing files themselves are not modified, and
-<code>git scaffold check</code> is clean immediately. Every divergence is now
-a visible patch you can whittle away over time.</p>
+captured as an explicit override under <code>.git-scaffold/patches/</code>:
+a structured <code>json-patch</code> where the scaffold permits it for a
+JSON or YAML file and both sides parse (the file is normalized to the
+canonical serialization), otherwise a <code>text-patch</code> — a unified
+diff from materialized to existing content — with the pre-existing file
+left untouched. Pass <code>--text-patch</code> to capture everything as text
+patches. <code>git scaffold check</code> is clean immediately, and every
+divergence is now a visible patch you can whittle away over time.</p>
+
+<p>Later, when you hand-edit a managed file and want to keep the change,
+<code>git scaffold repatch</code> rewrites the overrides from the working
+tree so <code>check</code> is clean again — see the
+<a href="./commands.html#repatch">command reference</a>.</p>
 
 <div class="note">
 For binary-looking files (content containing NUL bytes) a text diff is not

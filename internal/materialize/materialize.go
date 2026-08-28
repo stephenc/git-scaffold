@@ -254,3 +254,19 @@ func sortedKeys[V any](m map[string]V) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// PermittedPatch expands the descriptor against the source tree and returns,
+// for every concrete managed path, the structured patch strategy its
+// governing rule permits ("" when the rule declares none; text-patch is
+// always available regardless, §23).
+func PermittedPatch(sourceTree map[string][]byte, d *config.Descriptor) (map[string]string, error) {
+	managed, err := expand(sourceTree, d)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(managed))
+	for p, e := range managed {
+		out[p] = e.patch
+	}
+	return out, nil
+}

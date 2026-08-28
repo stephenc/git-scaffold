@@ -29,6 +29,11 @@ type tomlTarget struct {
 	} `toml:"source"`
 	Args      map[string]string       `toml:"args,omitempty"`
 	Overrides map[string]tomlOverride `toml:"overrides,omitempty"`
+	Propose   *tomlPropose            `toml:"propose,omitempty"`
+}
+
+type tomlPropose struct {
+	CreateCommand []string `toml:"create-command"`
 }
 
 type tomlOverride struct {
@@ -38,11 +43,13 @@ type tomlOverride struct {
 
 // Init implements `git scaffold init` (§33): create the target
 // configuration, resolve the source, materialize, and write the lock.
-// With existing, managed files already present with differing text content
-// are adopted as text-patch overrides instead of being overwritten; the
-// pre-existing bytes are left untouched. Nothing is written until the
+// With existing, managed files already present with differing content are
+// adopted as overrides instead of being overwritten — json-patch where the
+// source permits it and both sides parse (the file is then normalized to the
+// canonical serialization), else text-patch with the pre-existing bytes left
+// untouched; textOnly forces text-patch. Nothing is written until the
 // complete result has been validated.
-func Init(dir string, out io.Writer, url, ref string, args map[string]string, existing, force bool) error {
+func Init(dir string, out io.Writer, url, ref string, args map[string]string, existing, force, textOnly bool) error {
 	root, err := gitx.WorktreeRoot(dir)
 	if err != nil {
 		return err
@@ -66,7 +73,11 @@ func Init(dir string, out io.Writer, url, ref string, args map[string]string, ex
 		Overrides: map[string]config.Override{},
 	}
 	t := &target{root: root, cfg: cfg, src: src}
-	tree, err := t.materializeAt(sha)
+	srcTree, desc, err := t.loadSource(sha)
+	if err != nil {
+		return err
+	}
+	tree, err := t.materializeTree(srcTree, desc, cfg, nil)
 	if err != nil {
 		return err
 	}
@@ -75,7 +86,12 @@ func Init(dir string, out io.Writer, url, ref string, args map[string]string, ex
 	patchFiles := map[string][]byte{} // keyed relative to .git-scaffold/
 	var created, adopted, overwritten []string
 	if existing {
-		created, adopted, overwritten, err = t.adoptExisting(tree, sha, writes, patchFiles, force)
+		permitted, err := materialize.PermittedPatch(srcTree, desc)
+		if err != nil {
+			return err
+		}
+		created, adopted, overwritten, err = t.adoptExisting(
+			srcTree, desc, tree, permitted, writes, patchFiles, force, textOnly)
 		if err != nil {
 			return err
 		}
@@ -137,7 +153,7 @@ func Init(dir string, out io.Writer, url, ref string, args map[string]string, ex
 		fmt.Fprintf(out, "M %s\n", p)
 	}
 	for _, p := range adopted {
-		fmt.Fprintf(out, "P %s\n", p)
+		fmt.Fprintf(out, "P %s (%s)\n", p, cfg.Overrides[p].Strategy)
 	}
 	msg := fmt.Sprintf("initialized scaffold from %s at %s", url, short(sha))
 	if n := len(adopted); n > 0 {
@@ -145,7 +161,7 @@ func Init(dir string, out io.Writer, url, ref string, args map[string]string, ex
 		if n == 1 {
 			plural = ""
 		}
-		msg += fmt.Sprintf("; adopted %d existing file%s as text patches", n, plural)
+		msg += fmt.Sprintf("; adopted %d existing file%s as patches", n, plural)
 	}
 	io.WriteString(out, status(true, msg))
 	return nil
@@ -153,16 +169,20 @@ func Init(dir string, out io.Writer, url, ref string, args map[string]string, ex
 
 // adoptExisting implements the --existing flow of init (§33): compare each
 // expected managed file with the worktree, materialize missing files, leave
-// identical files alone, and capture text differences as verified text-patch
-// overrides stored under patches/. Differing binary-looking files cannot be
-// adopted; without force they cause a refusal, with force they are
-// overwritten. It fills writes and patchFiles, registers overrides on
-// t.cfg, and returns the created/adopted/overwritten path lists.
+// identical files alone, and capture differences as verified overrides
+// stored under patches/ (json-patch where permitted and parseable, else
+// text-patch; see choosePatch). Files whose difference is purely structured
+// formatting, and json-patched files, are normalized to the materialized
+// serialization and reported as overwritten. Differing binary-looking files
+// cannot be adopted; without force they cause a refusal, with force they are
+// overwritten. It fills writes and patchFiles, registers overrides on t.cfg,
+// and returns the created/adopted/overwritten path lists.
 func (t *target) adoptExisting(
-	tree map[string][]byte, sha string, writes, patchFiles map[string][]byte, force bool,
+	srcTree map[string][]byte, desc *config.Descriptor, tree map[string][]byte, permitted map[string]string,
+	writes, patchFiles map[string][]byte, force, textOnly bool,
 ) (created, adopted, overwritten []string, err error) {
 	expect := map[string][]byte{} // the worktree content after init
-	usedNames := map[string]bool{}
+	used := map[string]bool{}
 	var binaries []string
 	for _, p := range sortedKeys(tree) {
 		w, ok, err := readWorking(t.root, p)
@@ -184,60 +204,59 @@ func (t *target) adoptExisting(
 			overwritten = append(overwritten, p)
 			expect[p] = tree[p]
 		default:
-			rel := "patches/" + patchName(p, usedNames) + ".patch"
-			patch := []byte(unifiedDiff(p, tree[p], w, true))
-			// The guarantee (§33) hinges on the generated diff applying
-			// through the strict text-patch applier and reproducing the
-			// existing bytes exactly; verify before anything is written.
-			got, err := materialize.ApplyTextPatch(p, rel, tree[p], patch)
+			c, err := choosePatch(p, tree[p], w, permitted[p], textOnly)
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("init --existing: generated patch for %s does not apply: %w", p, err)
+				return nil, nil, nil, fmt.Errorf("init --existing: %w", err)
 			}
-			if !bytes.Equal(got, w) {
-				return nil, nil, nil, fmt.Errorf(
-					"init --existing: generated patch for %s does not reproduce the existing content", p)
+			if c.strategy == "" {
+				// Formatting-only difference: no override, normalize.
+				writes[p] = tree[p]
+				overwritten = append(overwritten, p)
+				expect[p] = tree[p]
+				continue
 			}
-			patchFiles[rel] = patch
-			t.cfg.Overrides[p] = config.Override{Strategy: config.StrategyTextPatch, Patches: []string{rel}}
+			rel := freePatchPath(p, c.strategy, used)
+			patchFiles[rel] = c.patch
+			t.cfg.Overrides[p] = config.Override{Strategy: c.strategy, Patches: []string{rel}}
 			adopted = append(adopted, p)
-			expect[p] = w
+			if !bytes.Equal(c.content, w) {
+				writes[p] = c.content
+				overwritten = append(overwritten, p)
+			}
+			expect[p] = c.content
 		}
 	}
 	if len(binaries) > 0 && !force {
 		return nil, nil, nil, fmt.Errorf(
-			"binary files differ from the scaffold and cannot be adopted as text patches"+
+			"binary files differ from the scaffold and cannot be adopted as patches"+
 				" (rerun with --force to overwrite them):\n  %s",
 			strings.Join(binaries, "\n  "))
 	}
 	// Recompute the full materialization with the generated overrides and
 	// compare it against the post-init worktree: `check` must pass
 	// immediately after init --existing.
-	full, err := t.materializeWith(sha, patchFiles)
+	full, err := t.materializeTree(srcTree, desc, t.cfg, patchFiles)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("init --existing: verification failed: %w", err)
 	}
-	if len(full) != len(expect) {
-		return nil, nil, nil, fmt.Errorf("init --existing: verification failed: managed file set changed")
-	}
-	for p, want := range expect {
-		if !bytes.Equal(full[p], want) {
-			return nil, nil, nil, fmt.Errorf(
-				"init --existing: verification failed: %s would not match the worktree after init", p)
-		}
+	if err := verifyExpected(full, expect); err != nil {
+		return nil, nil, nil, fmt.Errorf("init --existing: verification failed: %w", err)
 	}
 	return created, adopted, overwritten, nil
 }
 
-// patchName mangles a repo-relative path into a unique patch file basename:
-// `/` becomes `--`, with a numeric suffix on the rare mangling collision.
-func patchName(path string, used map[string]bool) string {
-	base := strings.ReplaceAll(path, "/", "--")
-	name := base
-	for i := 2; used[name]; i++ {
-		name = fmt.Sprintf("%s-%d", base, i)
+// verifyExpected checks that a full materialization equals the expected
+// post-command worktree for every managed path.
+func verifyExpected(full, expect map[string][]byte) error {
+	if len(full) != len(expect) {
+		return fmt.Errorf("managed file set changed")
 	}
-	used[name] = true
-	return name
+	for _, p := range sortedKeys(expect) {
+		if !bytes.Equal(full[p], expect[p]) {
+			return fmt.Errorf("%s would not match the worktree afterwards", p)
+		}
+	}
+	return nil
 }
 
 // Check implements `git scaffold check` (§34): compare the working tree with

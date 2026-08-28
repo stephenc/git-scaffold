@@ -98,3 +98,68 @@ func TestCobraLifecycle(t *testing.T) {
 		t.Fatalf("outdated: %v\n%s", err, out)
 	}
 }
+
+// TestCobraRepatch drives init --existing --text-patch and repatch through
+// cobra flag parsing.
+func TestCobraRepatch(t *testing.T) {
+	setEnv(t)
+	src := t.TempDir()
+	runGit(t, src, "init", "-q", "-b", "main")
+	files := map[string]string{
+		// The argument keeps a --arg value left on the shared rootCmd by an
+		// earlier test valid.
+		".git-scaffold/config.toml": "[scaffold]\nversion = 1\n\n" +
+			"[[arguments]]\nname = \"name\"\ndefault = \"x\"\n\n" +
+			"[[files]]\npath = \"cfg.json\"\npatch = \"json-patch\"\n",
+		"cfg.json": "{\n  \"a\": 1\n}\n",
+	}
+	for p, c := range files {
+		abs := filepath.Join(src, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(abs, []byte(c), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGit(t, src, "add", "-A")
+	runGit(t, src, "commit", "-q", "-m", "A")
+
+	tgt := t.TempDir()
+	runGit(t, tgt, "init", "-q", "-b", "main")
+	t.Chdir(tgt)
+	if err := os.WriteFile(filepath.Join(tgt, "cfg.json"), []byte(`{"a": 2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// --text-patch forces a text patch despite json-patch permission.
+	out, err := execute(t, "init", filepath.ToSlash(src), "--ref", "main", "--existing", "--text-patch")
+	if err != nil || !strings.Contains(out, "P cfg.json (text-patch)") {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+
+	// After a further hand edit, repatch without the flag switches to the
+	// preferred json patch.
+	if err := os.WriteFile(filepath.Join(tgt, "cfg.json"), []byte(`{"a": 3}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err = execute(t, "repatch")
+	if err != nil || !strings.Contains(out, "P cfg.json (json-patch)") {
+		t.Fatalf("repatch: %v\n%s", err, out)
+	}
+	if out, err := execute(t, "check"); err != nil {
+		t.Fatalf("check: %v\n%s", err, out)
+	}
+
+	// repatch --text-patch goes back to text on the next edit.
+	if err := os.WriteFile(filepath.Join(tgt, "cfg.json"), []byte(`{"a": 4}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err = execute(t, "repatch", "--text-patch")
+	if err != nil || !strings.Contains(out, "P cfg.json (text-patch)") {
+		t.Fatalf("repatch --text-patch: %v\n%s", err, out)
+	}
+	if _, err := execute(t, "repatch", "extra"); err == nil {
+		t.Fatal("repatch accepted a positional argument")
+	}
+}

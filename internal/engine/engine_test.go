@@ -588,7 +588,7 @@ func TestInit(t *testing.T) {
 	tgt := newRepo(t)
 	args := map[string]string{"project_name": "orders", "module": "github.com/acme/orders"}
 	var out bytes.Buffer
-	if err := Init(tgt, &out, filepath.ToSlash(src), "main", args, false, false); err != nil {
+	if err := Init(tgt, &out, filepath.ToSlash(src), "main", args, false, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "A Makefile\n") {
@@ -605,7 +605,7 @@ func TestInit(t *testing.T) {
 	mustCheckClean(t, tgt)
 
 	// A second init must refuse.
-	err := Init(tgt, io.Discard, filepath.ToSlash(src), "main", args, false, false)
+	err := Init(tgt, io.Discard, filepath.ToSlash(src), "main", args, false, false, false)
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("err = %v", err)
 	}
@@ -616,7 +616,7 @@ func TestInitMissingRequiredArgs(t *testing.T) {
 	src, _ := sourceRepoA(t)
 	tgt := newRepo(t)
 	err := Init(tgt, io.Discard, filepath.ToSlash(src), "main",
-		map[string]string{"project_name": "orders"}, false, false)
+		map[string]string{"project_name": "orders"}, false, false, false)
 	if err == nil || !strings.Contains(err.Error(), "missing required arguments: module") {
 		t.Fatalf("err = %v", err)
 	}
@@ -637,7 +637,7 @@ func TestInitDefaultRefAndSubdirectory(t *testing.T) {
 	args := map[string]string{"project_name": "orders", "module": "github.com/acme/orders"}
 	// Empty ref uses the remote HEAD (§6); commands run from subdirectories
 	// operate on the worktree root (§49).
-	if err := Init(sub, io.Discard, filepath.ToSlash(src), "", args, false, false); err != nil {
+	if err := Init(sub, io.Discard, filepath.ToSlash(src), "", args, false, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFile(t, tgt, ".git-scaffold/lock"); got != shaA+"\n" {
@@ -661,7 +661,7 @@ func TestInitExistingAdoptsDifferences(t *testing.T) {
 		"go.mod":   "module github.com/acme/orders\n\ngo 1.26\n",
 	})
 	var out bytes.Buffer
-	if err := Init(tgt, &out, filepath.ToSlash(src), "main", initArgs, true, false); err != nil {
+	if err := Init(tgt, &out, filepath.ToSlash(src), "main", initArgs, true, false, false); err != nil {
 		t.Fatal(err)
 	}
 	// The differing pre-existing file is untouched byte-for-byte.
@@ -692,8 +692,8 @@ func TestInitExistingAdoptsDifferences(t *testing.T) {
 	if got := readFile(t, tgt, ".git-scaffold/lock"); got != shaA+"\n" {
 		t.Fatalf("lock = %q", got)
 	}
-	if !strings.Contains(out.String(), "P Makefile\n") ||
-		!strings.Contains(out.String(), "adopted 1 existing file as text patches") {
+	if !strings.Contains(out.String(), "P Makefile (text-patch)\n") ||
+		!strings.Contains(out.String(), "adopted 1 existing file as patches") {
 		t.Fatalf("output:\n%s", out.String())
 	}
 	// The §33 guarantee: check passes immediately after init --existing.
@@ -705,7 +705,7 @@ func TestInitExistingWithoutDifferences(t *testing.T) {
 	src, shaA := sourceRepoA(t)
 	tgt := newRepo(t)
 	var out bytes.Buffer
-	if err := Init(tgt, &out, filepath.ToSlash(src), "main", initArgs, true, false); err != nil {
+	if err := Init(tgt, &out, filepath.ToSlash(src), "main", initArgs, true, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), "adopted") {
@@ -729,7 +729,7 @@ func TestInitExistingBinaryRefusalAndForce(t *testing.T) {
 		"Makefile":                 "build:\n\tgo build ./...\n# local\n",
 	})
 	before := snapshot(t, tgt)
-	err := Init(tgt, io.Discard, filepath.ToSlash(src), "main", initArgs, true, false)
+	err := Init(tgt, io.Discard, filepath.ToSlash(src), "main", initArgs, true, false, false)
 	if err == nil || !strings.Contains(err.Error(), "binary files differ") ||
 		!strings.Contains(err.Error(), ".github/workflows/ci.yml") {
 		t.Fatalf("err = %v", err)
@@ -739,7 +739,7 @@ func TestInitExistingBinaryRefusalAndForce(t *testing.T) {
 	// --force resolves only the binary refusal: the binary file is
 	// overwritten while the text-adoptable file is still adopted.
 	var out bytes.Buffer
-	if err := Init(tgt, &out, filepath.ToSlash(src), "main", initArgs, true, true); err != nil {
+	if err := Init(tgt, &out, filepath.ToSlash(src), "main", initArgs, true, true, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFile(t, tgt, ".github/workflows/ci.yml"); got != "name: ci\nproject: orders\n" {
@@ -749,7 +749,7 @@ func TestInitExistingBinaryRefusalAndForce(t *testing.T) {
 		t.Fatalf("Makefile modified: %q", got)
 	}
 	if !strings.Contains(out.String(), "M .github/workflows/ci.yml\n") ||
-		!strings.Contains(out.String(), "P Makefile\n") {
+		!strings.Contains(out.String(), "P Makefile (text-patch)\n") {
 		t.Fatalf("output:\n%s", out.String())
 	}
 	mustCheckClean(t, tgt)
@@ -761,7 +761,7 @@ func TestInitRefusesDifferingFilesWithoutExisting(t *testing.T) {
 	tgt := newRepo(t)
 	writeFiles(t, tgt, map[string]string{"Makefile": "hand written\n"})
 	before := snapshot(t, tgt)
-	err := Init(tgt, io.Discard, filepath.ToSlash(src), "main", initArgs, false, false)
+	err := Init(tgt, io.Discard, filepath.ToSlash(src), "main", initArgs, false, false, false)
 	if err == nil || !strings.Contains(err.Error(), "local modifications") ||
 		!strings.Contains(err.Error(), "Makefile") {
 		t.Fatalf("err = %v", err)
@@ -776,7 +776,7 @@ func TestUpdateThroughAdoptedPatch(t *testing.T) {
 	writeFiles(t, tgt, map[string]string{
 		"Makefile": "build:\n\tgo build ./...\n\nlint:\n\tgo vet ./...\n",
 	})
-	if err := Init(tgt, io.Discard, filepath.ToSlash(src), "main", initArgs, true, false); err != nil {
+	if err := Init(tgt, io.Discard, filepath.ToSlash(src), "main", initArgs, true, false, false); err != nil {
 		t.Fatal(err)
 	}
 	mustCheckClean(t, tgt)
@@ -900,7 +900,7 @@ func TestReadPathSymlinkSafety(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := snapshot(t, tgt2)
-	err := Init(tgt2, io.Discard, filepath.ToSlash(src), "main", initArgs, true, false)
+	err := Init(tgt2, io.Discard, filepath.ToSlash(src), "main", initArgs, true, false, false)
 	if err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("init --existing err = %v", err)
 	}
@@ -917,7 +917,7 @@ func TestInitDoesNotReportIdenticalFilesAsAdded(t *testing.T) {
 		"go.mod": "module github.com/acme/orders\n\ngo 1.26\n",
 	})
 	var out bytes.Buffer
-	if err := Init(tgt, &out, filepath.ToSlash(src), "main", initArgs, false, false); err != nil {
+	if err := Init(tgt, &out, filepath.ToSlash(src), "main", initArgs, false, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), "A go.mod\n") {

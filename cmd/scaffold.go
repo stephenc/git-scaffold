@@ -12,7 +12,7 @@ import (
 func newInitCmd() *cobra.Command {
 	var ref string
 	var args []string
-	var existing, force bool
+	var existing, force, textOnly bool
 	c := &cobra.Command{
 		Use:   "init <git-url>",
 		Short: "Initialize this repository from an upstream scaffold",
@@ -26,13 +26,28 @@ func newInitCmd() *cobra.Command {
 				}
 				values[k] = v
 			}
-			return engine.Init(".", cmd.OutOrStdout(), pos[0], ref, values, existing, force)
+			return engine.Init(".", cmd.OutOrStdout(), pos[0], ref, values, existing, force, textOnly)
 		},
 	}
 	c.Flags().StringVar(&ref, "ref", "", "source ref (branch, tag, or commit); defaults to the remote HEAD")
 	c.Flags().StringArrayVar(&args, "arg", nil, "scaffold argument value as name=value (repeatable)")
-	c.Flags().BoolVar(&existing, "existing", false, "adopt differing existing files as text-patch overrides")
+	c.Flags().BoolVar(&existing, "existing", false, "adopt differing existing files as patch overrides")
 	c.Flags().BoolVar(&force, "force", false, "overwrite differing existing files (with --existing: only binary files)")
+	c.Flags().BoolVar(&textOnly, "text-patch", false, "with --existing: capture differences as text patches only; never json-patch")
+	return c
+}
+
+func newRepatchCmd() *cobra.Command {
+	var textOnly bool
+	c := &cobra.Command{
+		Use:   "repatch",
+		Short: "Rewrite override patches from the current working-tree content of managed files",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return engine.Repatch(".", cmd.OutOrStdout(), textOnly)
+		},
+	}
+	c.Flags().BoolVar(&textOnly, "text-patch", false, "capture differences as text patches only; never json-patch")
 	return c
 }
 
@@ -135,6 +150,7 @@ func init() {
 		newApplyCmd(),
 		newUpdateCmd(),
 		newOutdatedCmd(),
+		newRepatchCmd(),
 		newProposeCmd(),
 	)
 }

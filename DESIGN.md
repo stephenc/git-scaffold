@@ -857,6 +857,7 @@ git scaffold diff
 git scaffold apply
 git scaffold update
 git scaffold outdated
+git scaffold repatch
 git scaffold propose
 ```
 
@@ -896,23 +897,43 @@ Interactive prompting is not required for v0.1.
 files already differ from the scaffold.
 
 When a managed file already exists in the worktree and its content
-differs from the materialization, init MUST record the difference as a
-`text-patch` override — a unified diff of materialized → existing
-content — stored under `.git-scaffold/patches/` and registered in
-`[overrides]`. The pre-existing file itself MUST NOT be modified.
+differs from the materialization, init MUST record the difference as an
+override stored under `.git-scaffold/patches/` and registered in
+`[overrides]`, choosing the strategy per §57 "Strategy selection":
+
+-   `json-patch` when the file's rule permits it (§23), the path has a
+    `.json`, `.yml` or `.yaml` extension, both the materialization and
+    the existing content parse, and the generated patch verifies. The
+    existing file is then normalized to the materialized (canonical)
+    serialization, since json-patch output is a canonical
+    re-serialization; init reports this as `M <path>` in addition to
+    `P <path> (json-patch)`. For YAML this canonicalization drops
+    comments, expands anchors and resolves YAML 1.1 scalars (`on` →
+    `true`, `yes` → `true`, `0755` → `493`, `1.20` → `1.2`); it is
+    therefore taken only when the materialized YAML already round-trips
+    unchanged through it, so only the user's own edit is ever
+    normalized. Multi-document YAML streams, JSON with duplicate keys,
+    and empty documents always take the text route. When the two documents are structurally
+    equal — a pure formatting difference — no override is recorded and
+    the file is normalized to the materialization (`M <path>` only).
+-   `text-patch` otherwise — a unified diff of materialized → existing
+    content. The pre-existing file itself MUST NOT be modified.
+
+`--text-patch` disables the structured preference: every difference is
+captured as a `text-patch` and no pre-existing file is modified — the
+way to avoid YAML canonicalization entirely.
 
 Files whose content already matches the materialization exactly need no
 patch. Managed files absent from the worktree are materialized as with
 plain init.
 
-After `init --existing`, `check` MUST pass without any pre-existing
-file having been modified.
+After `init --existing`, `check` MUST pass.
 
-Limit: for binary-looking files (content containing NUL bytes) a
-unified text diff is not meaningful. Differing binary files MUST cause
-a refusal that reports them; `--force` is required to overwrite them.
-With `--existing --force`, `--force` resolves only such binary
-refusals — text-adoptable files are still adopted, not overwritten.
+Limit: for binary-looking files (content containing NUL bytes) no
+meaningful patch exists. Differing binary files MUST cause a refusal
+that reports them; `--force` is required to overwrite them. With
+`--existing --force`, `--force` resolves only such binary refusals —
+adoptable files are still adopted, not overwritten.
 
 `--existing` with no pre-existing differing files behaves like plain
 init.
@@ -1390,7 +1411,17 @@ At minimum, tests MUST cover:
 -   successful text patch;
 -   failed text patch;
 -   token substitution occurring before patching;
--   patch path escaping `.git-scaffold`.
+-   patch path escaping `.git-scaffold`;
+-   generated JSON Patch round-tripping through the applier for JSON
+    and YAML (nested objects, array append/truncate/element change, key
+    add/remove, scalar type change, pointer escaping);
+-   `repatch` preferring `json-patch` where the rule permits it, with
+    `text-patch` fallback when the content does not parse;
+-   `repatch` idempotence (a second run reports nothing to do);
+-   `check` passing immediately after `repatch`;
+-   `repatch` dropping the override of a file returned to its base
+    content and deleting stale patch files;
+-   `repatch` preserving comments and formatting in `config.toml`.
 
 ### Lifecycle
 
@@ -1406,9 +1437,12 @@ At minimum, tests MUST cover:
     materialization;
 -   `apply` not advancing an existing lock;
 -   `outdated` not modifying state;
--   `init --existing` adopting differing files as text patches
-    (worktree untouched, `check` clean immediately after, binary
-    refusal without `--force`).
+-   `init --existing` adopting differing files as patches (`json-patch`
+    where permitted with normalization, `text-patch` otherwise with the
+    worktree untouched, `--text-patch` forcing text, `check` clean
+    immediately after, binary refusal without `--force`);
+-   `repatch` refusing missing managed files and differing binary
+    files without changing state, and never touching the lock.
 
 ### Proposals/safety
 
@@ -1617,3 +1651,126 @@ re-attempt on every command within the interval.
 The check MUST NOT delay a command by more than 2 seconds in total (the
 request timeout MUST fit within that bound), MUST NOT change any exit
 status, and MUST NOT write to stdout.
+
+## 57. `git scaffold repatch`
+
+``` sh
+git scaffold repatch [--text-patch]
+```
+
+Managed files are outputs (§29), and `check` reports hand edits as
+discrepancies. `repatch` is the sanctioned way to turn hand edits into
+persistent configuration: it reads the current working-tree content of
+every managed file and rewrites the target's `[overrides]` and patch
+files so that materialization reproduces that content — after
+`repatch`, `check` MUST pass.
+
+It requires an existing lock (the same `no .git-scaffold/lock` error as
+`check` otherwise) and never changes it. No `--force` exists:
+capturing local modifications is the purpose of the command.
+
+### Algorithm
+
+1.  Load the target configuration and lock; load the source tree and
+    descriptor at the locked commit.
+2.  Compute the *base* materialization: the pipeline of §25 with no
+    overrides applied (post-substitution, pre-patch content), and the
+    structured strategy each rule permits per managed path (§23). Also
+    compute the *current* full materialization with the existing
+    overrides (patch files read leniently); if it cannot be computed —
+    a broken override or patch is what `repatch` exists to fix — every
+    file is re-derived.
+3.  For every managed path, in lexical order, read the working tree:
+    -   a missing file is an error; all missing managed files are
+        listed (`cannot repatch missing managed files`, pointing at
+        `git scaffold apply`);
+    -   content equal to the current materialization needs no work:
+        the existing override, whatever its strategy, is kept untouched
+        and nothing is reported;
+    -   a differing binary-looking file (NUL bytes on either side) is an
+        error; all such files are listed;
+    -   content equal to the base needs no override: an existing
+        override for the path is dropped (`U <path>`);
+    -   otherwise one patch is generated by strategy selection (below).
+        If the materialized result differs from the working-tree bytes
+        (possible only for `json-patch`, whose output is a canonical
+        serialization) the file is normalized to the materialized bytes
+        (`M <path>`).
+4.  Overrides of paths the source does not manage cannot survive (they
+    fail every materialization) and are dropped (`U <path>`).
+5.  Patch files referenced by no override afterwards are deleted
+    (`D .git-scaffold/<rel>`).
+6.  Before anything is written, the complete materialization with the
+    new overrides MUST equal the expected post-repatch working tree for
+    every managed path (`repatch: verification failed: ...` otherwise).
+7.  All writes and deletions are performed transactionally (§31).
+
+### Strategy selection
+
+Given the base content, the wanted content, the rule's permitted
+structured strategy, and `--text-patch`:
+
+-   `json-patch` when `--text-patch` is not given, the rule permits
+    `json-patch`, the path ends in `.json`, `.yml` or `.yaml`, and both
+    sides parse (JSON without duplicate object keys, or a single YAML
+    document converted to the JSON model; an empty document does not
+    qualify). For YAML, additionally, the base MUST round-trip
+    byte-for-byte through the YAML → JSON → YAML canonicalization the
+    applier performs (§26): that canonicalization drops comments,
+    expands anchors and resolves YAML 1.1 scalars, and must never
+    rewrite keys the user did not touch. If the two decoded documents
+    are equal the difference is pure formatting: no
+    override is needed and the file is normalized back to the base
+    bytes (`M <path>`). Otherwise an RFC 6902 patch is generated by a
+    deterministic structural diff — objects: `add` for new keys,
+    `remove` for missing keys, recursion into common keys, keys visited
+    sorted; arrays: recursion over the common prefix, `add` with an
+    explicit index for extra trailing elements, `remove` from the
+    highest index downward for surplus elements; any other difference
+    (scalars, type changes): `replace`; JSON Pointer segments escaped
+    per RFC 6901 (`~` → `~0`, `/` → `~1`). The patch is verified through
+    the real applier (§26) and its output MUST be structurally equal to
+    the wanted content; if verification fails, `text-patch` is used
+    instead.
+-   `text-patch` otherwise: a unified diff of base → wanted content,
+    verified through the strict applier (§27) to reproduce the wanted
+    bytes exactly. The working-tree file is not modified.
+
+### Single-patch collapse, naming and reuse
+
+Each overridden path ends up with exactly one patch file. If the
+existing override for the path has the same strategy and exactly one
+patch that no other override references, that patch path is reused
+(rewritten in place); if its content
+is already identical, the path is not reported. Otherwise the patch is
+written to `patches/<mangled>.patch` (text) or `patches/<mangled>.json`
+(json-patch), where `<mangled>` is the repo-relative path with `/`
+replaced by `--`, choosing a numeric suffix (`-2`, `-3`, …) when the
+name collides with a patch path referenced by any other override.
+
+### Configuration rewrite
+
+`.git-scaffold/config.toml` is rewritten only when the override set
+changed, preserving the user's comments, ordering and formatting
+outside the `[overrides]` tables: every `[overrides…]` table header and
+the lines following it up to the next unrelated table header are
+removed, and the new overrides are appended in canonical TOML. The
+result is validated by parsing; when it does not reproduce the intended
+configuration (e.g. the original used an inline `overrides = {…}`
+table) the whole file is re-encoded from the parsed configuration.
+
+### Output and exit status
+
+Report lines, grouped as `P`, then `M`, `U`, `D`, each group in path
+order:
+
+``` text
+P <path> (json-patch|text-patch)   patch (re)generated
+M <path>                           file normalized to the materialization
+U <path>                           override removed
+D .git-scaffold/<rel>              stale patch file deleted
+```
+
+followed by `updated patches`; or `patches already up to date` when
+nothing changed. Exit status 0 on success, 1 on any error, in which
+case nothing has been changed.

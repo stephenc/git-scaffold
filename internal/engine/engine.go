@@ -94,30 +94,47 @@ func (t *target) materializeAt(sha string) (map[string][]byte, error) {
 }
 
 // materializeWith is materializeAt with the patch files supplied in memory,
-// keyed by path relative to .git-scaffold/. init --existing uses it to
-// verify generated patches before anything is written.
+// keyed by path relative to .git-scaffold/. init --existing and repatch use
+// it to verify generated patches before anything is written.
 func (t *target) materializeWith(sha string, patches map[string][]byte) (map[string][]byte, error) {
-	if err := t.src.EnsureCommit(sha); err != nil {
+	tree, desc, err := t.loadSource(sha)
+	if err != nil {
 		return nil, err
+	}
+	return t.materializeTree(tree, desc, t.cfg, patches)
+}
+
+// loadSource returns the source tree and the parsed descriptor at a source
+// commit, fetching only if the commit is missing from the cache.
+func (t *target) loadSource(sha string) (map[string][]byte, *config.Descriptor, error) {
+	if err := t.src.EnsureCommit(sha); err != nil {
+		return nil, nil, err
 	}
 	tree, err := t.src.ReadTree(sha)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	dd, ok := tree[configName]
 	if !ok {
-		return nil, fmt.Errorf("source commit %s has no scaffold descriptor %s", short(sha), configName)
+		return nil, nil, fmt.Errorf("source commit %s has no scaffold descriptor %s", short(sha), configName)
 	}
 	desc, err := config.ParseDescriptor(dd)
 	if err != nil {
-		return nil, fmt.Errorf("source descriptor at %s: %w", short(sha), err)
+		return nil, nil, fmt.Errorf("source descriptor at %s: %w", short(sha), err)
 	}
-	out, err := materialize.Materialize(tree, desc, t.cfg, patches)
+	return tree, desc, nil
+}
+
+// materializeTree runs the pure core over an already loaded source and
+// applies the engine's §48 guard: remote descriptors are untrusted, so a
+// managed path must never overwrite scaffold metadata.
+func (t *target) materializeTree(
+	tree map[string][]byte, desc *config.Descriptor, cfg *config.TargetConfig, patches map[string][]byte,
+) (map[string][]byte, error) {
+	out, err := materialize.Materialize(tree, desc, cfg, patches)
 	if err != nil {
 		return nil, err
 	}
-	// Remote descriptors are untrusted (§48): never let a managed path
-	// overwrite scaffold metadata.
 	for p := range out {
 		if p == metaDir || strings.HasPrefix(p, metaDir+"/") {
 			return nil, fmt.Errorf("source descriptor manages %q inside %s; refusing", p, metaDir)
