@@ -41,10 +41,79 @@
 
 <pre><code><span class="cm"># installed as git-scaffold, it runs as a Git subcommand</span>
 git scaffold init https://github.com/acme/go-template.git
+git scaffold init --existing https://github.com/acme/go-template.git
 git scaffold check      <span class="cm"># do managed files match the locked materialization?</span>
 git scaffold diff       <span class="cm"># show the differences</span>
 git scaffold update     <span class="cm"># move to the latest upstream commit, transactionally</span>
-git scaffold outdated   <span class="cm"># has the upstream ref advanced past the lock?</span></code></pre>
+git scaffold outdated   <span class="cm"># has the upstream ref advanced past the lock?</span>
+git scaffold repatch    <span class="cm"># turn local edits into explicit override patches</span>
+git scaffold propose    <span class="cm"># push an update as a branch and open a pull request</span></code></pre>
+
+<h2 id="sixty-seconds">Sixty seconds</h2>
+
+<p>A scaffold is an ordinary Git repository with a descriptor that names the
+files it manages and the arguments consumers fill in:</p>
+
+<pre><code><span class="cm"># template/.git-scaffold/config.toml</span>
+[scaffold]
+version = 1
+
+[[arguments]]
+name = "project"
+token = "@@PROJECT@@"
+
+[[files]]
+path = "Makefile"
+
+[[files]]
+path = ".github/workflows/*.yml"</code></pre>
+
+<p>Wherever <code>@@PROJECT@@</code> appears in <code>Makefile</code> or a
+workflow, the consumer's value is substituted. A consumer points at the
+scaffold and supplies the arguments:</p>
+
+<pre><code><span class="cm"># orders/.git-scaffold/config.toml</span>
+[scaffold]
+version = 1
+
+[source]
+git = "https://github.com/acme/template.git"
+ref = "main"
+
+[args]
+project = "orders"</code></pre>
+
+<p><code>git scaffold init</code> writes that file for you; from then on:</p>
+
+<pre><code>git scaffold check      <span class="cm"># do my managed files match the locked scaffold commit?</span>
+git scaffold outdated   <span class="cm"># has the scaffold moved on since I locked it?</span>
+git scaffold update     <span class="cm"># bring the managed files to the current scaffold commit</span></code></pre>
+
+<p>The scaffold commit in use is pinned in <code>.git-scaffold/lock</code>, so
+<code>update</code> is an explicit, reviewable step — never a surprise.</p>
+
+<h2 id="existing">Already have 37 slightly different repositories?</h2>
+
+<p>That is the normal case, and it is the one
+<code>git scaffold init --existing</code> is built for:</p>
+
+<pre><code>cd orders
+git scaffold init --existing https://github.com/acme/template.git --arg project=orders
+git scaffold check   <span class="cm"># ✅️ clean, immediately</span></code></pre>
+
+<p>Every managed file that already differs from the scaffold is captured as an
+explicit override under <code>.git-scaffold/patches/</code> and registered in
+<code>.git-scaffold/config.toml</code>. Nothing you already have is lost,
+<code>check</code> is clean from the first second, and every divergence is now
+a visible patch you can whittle away over time — or keep, deliberately, as the
+documented way this repository differs. Repeat across the fleet and
+<code>git scaffold update</code> starts working for all of them.</p>
+
+<p>JSON and YAML files the scaffold permits <code>json-patch</code> for are
+captured as structured RFC 6902 patches where both sides parse; everything
+else becomes a <code>text-patch</code> with the file left byte-for-byte
+untouched. See <a href="./commands.html#init">init --existing</a> for the
+details and the <code>--text-patch</code> escape hatch.</p>
 
 <h2>How it works</h2>
 

@@ -14,6 +14,7 @@ Installed as `git-scaffold`, it runs as a Git subcommand:
 
 ```sh
 git scaffold init https://github.com/acme/go-template.git
+git scaffold init --existing https://github.com/acme/go-template.git
 git scaffold check
 git scaffold diff
 git scaffold apply
@@ -24,6 +25,86 @@ git scaffold propose
 ```
 
 See [DESIGN.md](DESIGN.md) for the full specification.
+
+## Sixty seconds
+
+A scaffold is an ordinary Git repository with a descriptor that names the
+files it manages and the arguments consumers fill in:
+
+```toml
+# template/.git-scaffold/config.toml
+[scaffold]
+version = 1
+
+[[arguments]]
+name = "project"
+token = "@@PROJECT@@"
+
+[[files]]
+path = "Makefile"
+
+[[files]]
+path = ".github/workflows/*.yml"
+```
+
+Wherever `@@PROJECT@@` appears in `Makefile` or a workflow, the consumer's
+value is substituted. A consumer points at the scaffold and supplies the
+arguments:
+
+```toml
+# orders/.git-scaffold/config.toml
+[scaffold]
+version = 1
+
+[source]
+git = "https://github.com/acme/template.git"
+ref = "main"
+
+[args]
+project = "orders"
+```
+
+`git scaffold init` writes that file for you; from then on:
+
+```sh
+git scaffold check      # do my managed files match the locked scaffold commit?
+git scaffold outdated   # has the scaffold moved on since I locked it?
+git scaffold update     # bring the managed files to the current scaffold commit
+```
+
+The scaffold commit in use is pinned in `.git-scaffold/lock`, so `update` is
+an explicit, reviewable step — never a surprise.
+
+## Already have 37 slightly different repositories?
+
+That is the normal case, and it is the one `git scaffold init --existing`
+is built for:
+
+```sh
+cd orders
+git scaffold init --existing https://github.com/acme/template.git --arg project=orders
+git scaffold check   # ✅️ clean, immediately
+```
+
+Every managed file that already differs from the scaffold is captured as an
+explicit override under `.git-scaffold/patches/` and registered in
+`.git-scaffold/config.toml`. Nothing you already have is lost, `check` is
+clean from the first second, and every divergence is now a visible patch you
+can whittle away over time — or keep, deliberately, as the documented way
+this repository differs. Repeat across the fleet and `git scaffold update`
+starts working for all of them.
+
+Where the scaffold permits `json-patch` for a JSON or YAML file and both
+sides parse, the difference is captured as a structured RFC 6902 patch and
+the file is normalized to the canonical serialization; everything else
+becomes a `text-patch` with the file left byte-for-byte untouched. Note
+that json-patch application canonicalizes YAML — comments are dropped,
+anchors expanded, YAML 1.1 scalars such as `on`, `yes` or `0755` resolved —
+so YAML takes the structured route only when the scaffold's own file
+already round-trips unchanged; pass `--text-patch` to capture everything as
+text patches and avoid canonicalization entirely. `text-patch` is always
+available to targets as the universal escape hatch; structured strategies
+such as `json-patch` require the scaffold to permit them per file rule.
 
 ## How it works
 
@@ -38,25 +119,6 @@ the configuration, the locked commit, the argument values, and the patches,
 the contents of every managed file are deterministic. Manual edits to managed
 files are not a customization mechanism — `git scaffold check` reports them as
 discrepancies.
-
-## Adopting an existing repository
-
-`git scaffold init --existing` brings a repository that already has content
-under scaffold management, guaranteed: any managed file that differs from the
-scaffold's materialization is captured as an explicit override under
-`.git-scaffold/patches/`, so `git scaffold check` is clean immediately and
-every divergence is visible as a patch you can whittle away over time.
-Where the scaffold permits `json-patch` for a JSON or YAML file and both
-sides parse, the difference is captured as a structured RFC 6902 patch and
-the file is normalized to the canonical serialization; everything else
-becomes a `text-patch` with the file left byte-for-byte untouched. Note
-that json-patch application canonicalizes YAML — comments are dropped,
-anchors expanded, YAML 1.1 scalars such as `on`, `yes` or `0755` resolved —
-so YAML takes the structured route only when the scaffold's own file
-already round-trips unchanged; pass `--text-patch` to capture everything as
-text patches and avoid canonicalization entirely. `text-patch` is always
-available to targets as the universal escape hatch; structured strategies
-such as `json-patch` require the scaffold to permit them per file rule.
 
 ## Evolving overrides
 
